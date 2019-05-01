@@ -1,3 +1,5 @@
+// CoCoWiFI modifications by Allen C. Huffman of www.subethasoftware.com
+#define COCOWIFI
 /*
    Copyright 2016-2019 Bo Zimmerman
 
@@ -5,7 +7,6 @@
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
 
-	   http://www.apache.org/licenses/LICENSE-2.0
 
    Unless required by applicable law or agreed to in writing, software
    distributed under the License is distributed on an "AS IS" BASIS,
@@ -21,8 +22,8 @@ const char compile_date[] = __DATE__ " " __TIME__;
 
 #ifdef ARDUINO_ESP32_DEV
 # define ZIMODEM_ESP32
-#elif defined(ESP32)
-# define ZIMODEM_ESP32
+//#elif defined(ESP32)
+//# define ZIMODEM_ESP32
 #elif defined(ARDUINO_ESP320)
 # define ZIMODEM_ESP32
 #elif defined(ARDUINO_NANO32)
@@ -33,10 +34,28 @@ const char compile_date[] = __DATE__ " " __TIME__;
 # define ZIMODEM_ESP32
 #elif defined(ARDUINO_QUANTUM)
 # define ZIMODEM_ESP32
+/* CoCoWiFi supported boards: */
+#elif defined(ARDUINO_NodeMCU_32S)
+# define ZIMODEM_ESP32
+# define BOARD_NAME "nodemcu-32s"
+#elif defined(ARDUINO_ESP8266_GENERIC)
+# define ZIMODEM_ESP8266
+# define BOARD_NAME "generic"
+#elif defined(ARDUINO_ESP8266_NODEMCU)
+# define ZIMODEM_ESP8266
+# define BOARD_NAME "nodemcu"
 #else
 # define ZIMODEM_ESP8266
 #endif
 
+#if !defined(BOARD_NAME)
+#error CoCoWiFi edition is not configured for this board yet.
+#endif
+
+#define UPDATE_URL   "www.subethasoftware.com"
+// Must have %s where the version string will go.
+#define UPDATE_FILE  "/files/zimodem/zimodem.ino."BOARD_NAME"-%s.bin"
+#define VERSION_FILE "/files/zimodem/zimodem-latest-version.txt"
 
 #ifdef ZIMODEM_ESP32
 # define DEFAULT_PIN_DCD GPIO_NUM_14
@@ -73,8 +92,13 @@ const char compile_date[] = __DATE__ " " __TIME__;
 # define DEFAULT_PIN_RTS 4
 # define DEFAULT_PIN_CTS 5 // is 0 for ESP-01, see getDefaultCtsPin() below.
 # define DEFAULT_PIN_DCD 2
+#if defined(BOARD_NAME) // CoCoWiFi
+// Default to no flow control, and use normal RS-232.
+# define DEFAULT_FCT FCT_DISABLED
+#else
 # define DEFAULT_FCT FCT_RTSCTS
 # define RS232_INVERTED 1
+#endif
 # define debugPrintf doNothing
 # define preEOLN(...)
 # define echoEOLN(...) serial.prints(EOLN)
