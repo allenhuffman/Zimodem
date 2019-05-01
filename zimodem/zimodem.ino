@@ -95,6 +95,7 @@ const char compile_date[] = __DATE__ " " __TIME__;
 #if defined(BOARD_NAME) // CoCoWiFi
 // Default to no flow control, and use normal RS-232.
 # define DEFAULT_FCT FCT_DISABLED
+# define RS232_INVERTED 0
 #else
 # define DEFAULT_FCT FCT_RTSCTS
 # define RS232_INVERTED 1
