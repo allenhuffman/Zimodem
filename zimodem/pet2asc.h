@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2017 Bo Zimmerman
+   Copyright 2016-2019 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -21,7 +21,8 @@
 # include <Update.h>
 # include "SD.h"
 # include "SPI.h"
-  static HardwareSerial HWSerial(2);
+# include "driver/uart.h"
+  static HardwareSerial HWSerial(UART_NUM_2);
 #else
 # include "ESP8266WiFi.h"
 # define HWSerial Serial

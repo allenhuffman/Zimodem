@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2017 Bo Zimmerman
+   Copyright 2016-2019 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -41,6 +41,8 @@ WiFiClientNode::WiFiClientNode(char *hostIp, int newport, int flagsBitmap)
   client.setNoDelay(DEFAULT_NO_DELAY);
   setCharArray(&delimiters,"");
   setCharArray(&maskOuts,"");
+  setCharArray(&stateMachine,"");
+  machineState = stateMachine;
   if(!client.connect(hostIp, port))
   {
     // deleted when it returns and is deleted
@@ -59,6 +61,8 @@ WiFiClientNode::WiFiClientNode(WiFiClient newClient, int flagsBitmap, int ringDe
   port=newClient.localPort();
   setCharArray(&delimiters,"");
   setCharArray(&maskOuts,"");
+  setCharArray(&stateMachine,"");
+  machineState = stateMachine;
   String remoteIPStr = newClient.remoteIP().toString();
   const char *remoteIP=remoteIPStr.c_str();
   host=new char[remoteIPStr.length()+1];
@@ -103,8 +107,11 @@ WiFiClientNode::~WiFiClientNode()
     commandMode.current = conns;
   if(commandMode.nextConn == this)
     commandMode.nextConn = conns;
+  underflowBufLen = 0;
   freeCharArray(&delimiters);
   freeCharArray(&maskOuts);
+  freeCharArray(&stateMachine);
+  machineState = NULL;
   next=null;
   checkOpenConnections();
 }
@@ -155,6 +162,12 @@ int WiFiClientNode::read()
 {
   if((host == null)||(!answered))
     return 0;
+  if(underflowBufLen > 0)
+  {
+    int b = underflowBuf[0];
+    memcpy(underflowBuf,underflowBuf+1,--underflowBufLen);
+    return b;
+  }
   return client.read();
 }
 
@@ -162,6 +175,8 @@ int WiFiClientNode::peek()
 {
   if((host == null)||(!answered))
     return 0;
+  if(underflowBufLen > 0)
+    return underflowBuf[0];
   return client.peek();
 }
 
@@ -178,6 +193,8 @@ int WiFiClientNode::available()
 {
   if((host == null)||(!answered))
     return 0;
+  if(underflowBufLen > 0)
+    return underflowBufLen;
   return client.available();
 }
 
@@ -185,11 +202,38 @@ int WiFiClientNode::read(uint8_t *buf, size_t size)
 {
   if((host == null)||(!answered))
     return 0;
-  return client.read(buf,size);
+  // this whole underflow buf len thing is to get around yet another
+  // problem in the underlying library where a socket disconnection
+  // eats away any stray available bytes in their buffers.
+  if(underflowBufLen > 0)
+  {
+    if(underflowBufLen <= size)
+    {
+      memcpy(buf,underflowBuf,underflowBufLen);
+      size = underflowBufLen;
+      underflowBufLen = 0;
+    }
+    else
+    {
+      memcpy(buf,underflowBuf,size);
+      underflowBufLen -= size;
+      memcpy(underflowBuf,underflowBuf+size,underflowBufLen);
+    }
+    return size;
+  }
+  
+  int bytesRead = client.read(buf,size);
+  int newAvail = client.available(); 
+  if((newAvail>0) && (newAvail<size) && (newAvail<UNDERFLOW_BUF_MAX_SIZE))
+    underflowBufLen = client.read(underflowBuf,newAvail); 
+  return bytesRead;
 }
 
 int WiFiClientNode::flushOverflowBuffer()
 {
+  /*
+   * I've never gotten any of this to trigger, and could use those
+   * extra 260 bytes per connection
   if(overflowBufLen > 0)
   {
     // because overflowBuf is not a const char* for some reason
@@ -203,8 +247,7 @@ int WiFiClientNode::flushOverflowBuffer()
     if(bufWrite >= overflowBufLen)
     {
       overflowBufLen = 0;
-      if(pinSupport[pinRTS])
-        digitalWrite(pinRTS,rtsActive);
+      s_pinWrite(pinRTS,rtsActive);
       // fall-through
     }
     else
@@ -215,27 +258,27 @@ int WiFiClientNode::flushOverflowBuffer()
           overflowBuf[i-bufWrite]=overflowBuf[i];
         overflowBufLen -= bufWrite;
       }
-      if(pinSupport[pinRTS])
-        digitalWrite(pinRTS,rtsInactive);
+      s_pinWrite(pinRTS,rtsInactive);
       return bufWrite;
     }
   }
+   */
   return 0;
 }
 
 size_t WiFiClientNode::write(const uint8_t *buf, size_t size)
 {
+  int written = 0;
+  /* overflow buf is pretty much useless now
   if(host == null)
   {
     if(overflowBufLen>0)
     {
-      if(pinSupport[pinRTS])
-        digitalWrite(pinRTS,rtsActive);
+      s_pinWrite(pinRTS,rtsActive);
     }
     overflowBufLen=0;
     return 0;
   }
-  int written = 0;
   written += flushOverflowBuffer();
   if(written > 0)
   {
@@ -243,15 +286,40 @@ size_t WiFiClientNode::write(const uint8_t *buf, size_t size)
       overflowBuf[overflowBufLen]=buf[i];
     return written;
   }
+  */
   written += client.write(buf, size);
+  /*
   if(written < size)
   {
     for(int i=written;i<size && overflowBufLen<OVERFLOW_BUF_SIZE;i++,overflowBufLen++)
       overflowBuf[overflowBufLen]=buf[i];
-    if(pinSupport[pinRTS])
-      digitalWrite(pinRTS,rtsInactive);
+    s_pinWrite(pinRTS,rtsInactive);
   }
+  */
   return written;
+}
+
+String WiFiClientNode::readLine(int timeout)
+{
+  long now=millis();
+  String line = "";
+  while(((millis()-now < timeout) || (available()>0)))
+  {
+    yield();
+    if(available()>0)
+    {
+      char c=read();
+      if((c=='\n')||(c=='\r'))
+      {
+          if(line.length()>0)
+            return line;
+      }
+      else
+      if((c >= 32 ) && (c <= 127))
+        line += c;
+    }
+  }
+  return line;
 }
 
 void WiFiClientNode::answer()
@@ -290,7 +358,12 @@ int WiFiClientNode::getNumOpenWiFiConnections()
   WiFiClientNode *conn = conns;
   while(conn != null)
   {
-    if(conn->isConnected() && conn->isAnswered())
+    if((conn->isConnected()
+     ||(conn->available()>0)
+     ||((conn == conns)
+       &&((serialOutBufferBytesRemaining() <SER_WRITE_BUFSIZE-1)
+         ||(HWSerial.availableForWrite()<SER_BUFSIZE))))
+    && conn->isAnswered())
       num++;
     conn = conn->next;
   }

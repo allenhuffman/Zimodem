@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2017 Bo Zimmerman
+   Copyright 2016-2019 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 */
 
 const int MAX_COMMAND_SIZE=256;
+#define ZI_STATE_MACHINE_LEN 7
 
 enum ZResult
 {
@@ -57,7 +58,8 @@ enum ConfigOptions
   CFG_TIMEZONE=26,
   CFG_TIMEFMT=27,
   CFG_TIMEURL=28,
-  CFG_LAST=28
+  CFG_HOSTNAME=29,
+  CFG_LAST=29
 };
 
 enum BinType
@@ -96,8 +98,12 @@ class ZCommand : public ZMode
     unsigned long currentExpiresTimeMs = 0;
     char *tempDelimiters = NULL;
     char *tempMaskOuts = NULL;
+    char *tempStateMachine = NULL;
     char *delimiters = NULL;
     char *maskOuts = NULL;
+    char *stateMachine = NULL;
+    char *machineState = NULL;
+    String machineQue = "";
     String previousCommand = "";
     WiFiClientNode *nextConn=null;
     int lastPacketId = -1;
@@ -119,9 +125,10 @@ class ZCommand : public ZMode
     void headerOut(const int channel, const int sz, const int crc8);
     void sendConnectionNotice(int nodeId);
     void sendNextPacket();
-    bool doWebGet(const char *hostIp, int port, const char *filename, const char *req, const bool doSSL);
-    bool doWebGetBytes(const char *hostIp, int port, const char *req, const bool doSSL, uint8_t *buf, int *bufSize);
-    bool doWebGetStream(const char *hostIp, int port, const char *req, WiFiClient *c, uint32_t *responseSize);
+    void connectionArgs(WiFiClientNode *c);
+    uint8_t *doStateMachine(uint8_t *buf, int *bufLen, char **machineState, String *machineQue, char *stateMachine);
+    uint8_t *doMaskOuts(uint8_t *buf, int *bufLen, char *maskOuts);
+    ZResult doWebDump(const char *filename, const bool cache);
 
     ZResult doResetCommand();
     ZResult doNoListenCommand();

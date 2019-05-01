@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2017 Bo Zimmerman
+   Copyright 2016-2019 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -16,14 +16,19 @@
 
 #define LAST_PACKET_BUF_SIZE 256
 #define OVERFLOW_BUF_SIZE 256
+#define UNDERFLOW_BUF_MAX_SIZE 256
+
+#ifdef ZIMODEM_ESP32
+#include <WiFiClientSecure.h>
+#endif
 
 static WiFiClient *createWiFiClient(bool SSL)
 {
-  /*** adds like 8% to the total!
+#ifdef ZIMODEM_ESP32
   if(SSL)
     return new WiFiClientSecure();
   else
-  */
+#endif
   return new WiFiClient();
 }
 
@@ -47,10 +52,16 @@ class WiFiClientNode : public Stream
     int flagsBitmap = 0;
     char *delimiters = NULL;
     char *maskOuts = NULL;
+    char *stateMachine = NULL;
+    char *machineState = NULL;
+    String machineQue = "";
+
     uint8_t lastPacketBuf[LAST_PACKET_BUF_SIZE];
     int lastPacketLen=0;
-    uint8_t overflowBuf[OVERFLOW_BUF_SIZE];
-    int overflowBufLen = 0;
+    //uint8_t overflowBuf[OVERFLOW_BUF_SIZE];
+    //int overflowBufLen = 0;
+    uint8_t underflowBuf[UNDERFLOW_BUF_MAX_SIZE];
+    size_t underflowBufLen = 0;
     WiFiClientNode *next = null;
 
     WiFiClientNode(char *hostIp, int newport, int flagsBitmap);
@@ -78,6 +89,7 @@ class WiFiClientNode : public Stream
     void flush();
     int available();
     int read(uint8_t *buf, size_t size);
+    String readLine(int timeout);
 
     static int getNumOpenWiFiConnections();
 };

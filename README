@@ -1,4 +1,4 @@
-C64Net WiFi Firmware 3.4 (C)2016-2018 Bo Zimmerman
+C64Net WiFi Firmware 3.4.3 (C)2016-2019 Bo Zimmerman
 Please read the LICENSE file for license information
 Please read the NOTICE file for credits information
 
@@ -10,9 +10,9 @@ The default baud rate that the firmware establishes is 1200.  Be sure to use the
 
 Building:
 ---------
-To build this firmware for the ESP-01 or ESP-12, I used the Arduino IDE rev1.6.11 with the Arduino Generic ESP8266 Module installed from the head dev at https://github.com/esp8266/Arduino.  Using that version of the library not the official Boards Manager distribution (via Additional Boards Manager URL http://arduino.esp8266.com/stable/package_esp8266com_index.json) was important to resolving several problems (specifically 300ms/byte socket write times).  How you get there from here was tricky.  I followed the standard instructions for installing an ESP board, found where it dropped the package (on Windows 10, it was in:c:\users\<myname>\AppData\Local\Arduino15\packages\esp8266\hardware\esp8266\... I dropped the new stuff from github in there instead of the old stuff, and then went into the new "tools" directory and ran get.py. ** 
+To build this firmware for the ESP-01 or ESP-12, I used the Arduino IDE rev1.6.11 (or any version before or equal to 1.8.5) with the Arduino Generic ESP8266 Module installed from the head dev at https://github.com/esp8266/Arduino.  Using that version of the library not the official Boards Manager distribution (via Additional Boards Manager URL http://arduino.esp8266.com/stable/package_esp8266com_index.json) was important to resolving several problems (specifically 300ms/byte socket write times).  How you get there from here was tricky.  I followed the standard instructions for installing an ESP board, found where it dropped the package (on Windows 10, it was in:c:\users\<myname>\AppData\Local\Arduino15\packages\esp8266\hardware\esp8266\... I dropped the new stuff from github in there instead of the old stuff, and then went into the new "tools" directory and ran get.py. ** 
 
-To build this firmware for the ESP-32, I also used the Arduino IDE rev 1.6.11 with the Arduino ESP32 Dev Module installed from the head dev at https://github.com/espressif/arduino-esp32, with the following settings: QIO, 4MB, 80MHZ, 921600, NONE, Avrisp Mk II **.  I found that baud changing corrupts the serial bus as of 1/13/2018, so the following changes were made to the base libraries: 
+To build this firmware for the ESP-32, I also used the Arduino IDE rev 1.6.11 (or any version before or equal to 1.8.5) with the Arduino ESP32 Dev Module installed from the head dev at https://github.com/espressif/arduino-esp32, with the following settings: QIO, 4MB, 80MHZ, 921600, NONE, Avrisp Mk II **.  I found that baud changing corrupts the serial bus as of 1/13/2018, so the following changes were made to the base libraries: 
 > Added to esp32-hal-uart.c:
 void uartChangeBaudRate(uint8_t uart_nr, uint32_t baudrate)
 { 
@@ -32,15 +32,29 @@ void uartChangeConfig(uint8_t uart_nr, uint32_t config)
     }
     UART_MUTEX_UNLOCK();
 }
+size_t uartWritesRemaining(uart_t* uart)
+{
+    if(uart == NULL) {
+        return;
+    }
+    size_t remain;
+    UART_MUTEX_LOCK();
+    remain = 0x7F - uart->dev->status.txfifo_cnt;
+    UART_MUTEX_UNLOCK();
+    return remain;
+}
 > Added to esp32-hal-uart.h:
 void uartChangeBaudRate(uint8_t uart_nr, uint32_t baudrate);
 void uartChangeConfig(uint8_t uart_nr, uint32_t config);
+size_t uartWritesRemaining(uart_t* uart);
 > Added to HardwareSerial.cpp:
 void HardwareSerial::changeBaudRate(int baudRate) { uartChangeBaudRate(_uart_nr, baudRate); }
 void HardwareSerial::changeConfig(uint32_t config) { uartChangeConfig(_uart_nr, config); }
+size_t HardwareSerial::availableForWrite() { return uartWritesRemaining(_uart); }
 > Added to HardwareSerial.h:
 void changeBaudRate(int baudRate);
 void changeConfig(uint32_t config);
+size_t availableForWrite();
 
 ** Both versions of the firmware are built with SPIFFS enabled.
 
@@ -184,6 +198,7 @@ ATS55=n : Changes DTR pin number, n=12 is default (N/A on ESP01)
 ATS56=n : Changes DSR status. n=0 is default DSR=HIGH=active. n=1 is RTS=LOW=active. n=2 always HIGH. n=3 always LOW. (N/A on ESP01)
 ATS57=n : Changes DSR pin number, n=13 is default (N/A on ESP01)
 ATS60=n : When n > 0, immediately saves existing listeners and automatically restores them later. n=0 to clear.
+
 +++ : With a 1 second pause with no other characters afterwards, this will disconnect the current opened connection.
 
 ATT"[MESSAGE]" : Transmit the given text string, with \r\n at the end, on the current connection.
@@ -195,20 +210,28 @@ ATT+"[MESSAGE] : A + argument may be used to force the 'T' command to return the
 ATL0  : Re-sends the most recently sent data packet again
 ATLn  : Re-sends the most recently sent data packet for connection id n.
 
+AT&H  : Shows a help file from the web, or brief help otherwise.  Use &H6502 to reiforce web download.
 AT&L  : Reloads the saved configuration.
 AT&W  : Saves the current configuration: WiFi settings(ATW), baud rate (ATB), end of line (ATR) settings, flow control (ATF), echo mode (ATE), extended responses (ATX), verbose responses (ATV), quiet responses (ATQ), PETSCII mode (AT&P1), pin statuses (ATS46 - S58), Rings (ATS0), Listener Stream-mode (ATS41), and Listener restore (ATS60)
-AT&F  : Restores the modem to factory default settings.
+AT&F  : Restores the modem to factory default settings.  Use &F86 to reformat the SPIFFS.
 AT&On : n is 1 to turn on internal serial-reception log, n is 0 to turn off or view a previously turned-on log.
-AT&H  : Shows a help file from the web, or brief help otherwise.
 AT&U  : Checks the firmware home page to see if a new version is available.
 AT&U6502 : Will update the firmware from the home page on the web.
 AT&U=x: Will update the firmware from the web to custom version x.
+AT&Kn : Flow Control, similar to ATFn, n=0,1,2: disable, n=3,6: rts/cts, n=4,5: Xon/Xoff
 AT&Pn : Where n > 0, all command mode input and output will be translated to/from PETSCII before internal processing.  This will not affect received packet data, or the stream mode.
 AT&Nx : Shows the status of ESP module I/O pin x
 AT&Mn : Adds the byte denoted by n to a list of mask-out bytes.  These are bytes that are not transmitted to the serial port in command mode incoming packets.  If this command is followed by a C, N, or A command on the SAME LINE, then the setting will apply ONLY to that connection or listener.
 AT&M  : Resets the mask-out bytes list. No bytes will be masked-out. If this command is followed by a C, N, or A command on the SAME LINE, then the setting will apply ONLY to that connection or listener.
 AT&Dn : Adds the byte denoted by n to a list of delimiter bytes.  These are bytes that will compose the last byte in a command-mode incoming packet that is still shorter than the limit set by ATS40. This is useful for CR-LF formatted data.  If this command is followed by a C, N, or A command on the SAME LINE, then the setting will apply ONLY to that connection or listener.
-AT&D  : Resets the delimiter bytes lis. No bytes will be delimited, and packets will contain as many bytes as are received and allowed by ATS40.  If this command is followed by a C, N, or A command on the SAME LINE, then the setting will apply ONLY to that connection or listener.
-AT&T"[TIMEZONE],[TIME FORMAT],[NTP URL]" : set up the NTP clock. DISABLE to disable. Format is like Java SimpleDateFormat, but with % escapes. Each argument is optional.
+AT&D  : Resets the delimiter bytes list. No bytes will be delimited, and packets will contain as many bytes as are received and allowed by ATS40.  If this command is followed by a C, N, or A command on the SAME LINE, then the setting will apply ONLY to that connection or listener.
 
+AT&S"40=[HOSTNAME]" : Change the modem hostname
+AT&S"41=[TERMTYPE]" : Change the telnet 'termtype' response string
+
+AT&T"[TIMEZONE],[TIME FORMAT],[NTP URL]" : set up the NTP clock. DISABLE to disable. Format is like Java SimpleDateFormat, but with % escapes. Each argument is optional.
 AT&G"[HOSTNAME]:[PORT]/[FILENAME]" : Streams a file from an HTTP source on the internet.  The header contains channel 0, file length, and an 8-bit sum of all the bytes in the forthcoming file, followed by the bytes of the file, all formatted as a normal packet.  An ASCII 3 (CNTRL-C) received during the transfer will abort. The S44 register can be used to create artificial delays in this output.  XON/XOFF Flow control also remains in effect with, on a byte-by-byte basis for the auto and manual flow control systems.
+AT&Y  : Resets the state machine string. No state machine will be executed.
+AT&Yn : Change the current state (for command mode AND current connection) to state n, where n is a decimal number.
+AT&Y"[CODED STATE MACHINE]" : Adds the coded format string to a state machine.  If this command is followed by a C, N, or A command on the SAME LINE, then the setting will apply ONLY to that connection or listener.   State Machine Format: MMcCCNN ...  States are numbered by their order in the list starting with 00.  Non-matches automatically go to the next state until a match is made.   'MM' is hex byte to match (or 00 to match all).  'c' is one of these commands :e=eat byte, p=push byte to que, d=send byte, q=send all queued, x=flush queue, r=replace with byte represented by hex CC.  'C' is either '-', one of the command letters above, or a hex byte value if the first command was 'r'.  'NN' is the next state to go to, with 00 being the first state.
+

@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2016 Bo Zimmerman
+   Copyright 2016-2019 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ class ZBrowser : public ZMode
     bool savedEcho;
     String path="/";
     String EOLN;
-    const char *EOLNC;
+    char EOLNC[5];
     unsigned long lastNumber;
     String lastString;
 

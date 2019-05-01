@@ -1,3 +1,5 @@
+  *. if prog button held for 4 seconds, do a factory reset.
+  *. make a persistent-ish ftp shell
   *. Support ring signal, Server Conns on Hold, and true RING msgs.
   *. Ability to use protocols for at&g, and maybe have alternative at+web
   *. Ability to ftp file streamdown, like at&g.. maybe at+ftp
@@ -7,7 +9,7 @@
   *. SLIP support?
   *. PPP support?
   *. Network printer support?
-  
+
   --- C= Modem tech details:
   1650 Automodem
 VIC-20: B1=37136, B2=37138
@@ -74,9 +76,6 @@ Pin E: DTR from the computer - to force a hang-up
 
 1670 allows the DCD line to float via a dip-switch, FOR PLUS/4 COMPATIBILITY!!!!!
 
-
-
-
 -------------------------------------------------------------------------
 m0=0=1670
 m0=1=1650
@@ -101,4 +100,3 @@ Carrier Detect
 if(peek(56577)and16)=0 the online
 if(peek(56577)and16)=16 the offline
 That means pin H is reversed?!
-  

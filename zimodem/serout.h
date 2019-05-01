@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2017 Bo Zimmerman
+   Copyright 2016-2019 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -31,7 +31,11 @@ enum FlowControlType
 };
 
 static bool enableRtsCts = true;
-static int SER_BUFSIZE = 128;
+#ifdef ZIMODEM_ESP32
+#  define SER_BUFSIZE 0x7F
+#else
+#  define SER_BUFSIZE 128
+#endif
 static uint8_t TBUF[SER_WRITE_BUFSIZE];
 static char FBUF[256];
 static int TBUFhead=0;
@@ -41,15 +45,15 @@ static int serialDelayMs = 0;
 static void serialDirectWrite(uint8_t c);
 static void serialOutDeque();
 static int serialOutBufferBytesRemaining();
-static void enqueSerialOut(uint8_t c);
 static void clearSerialOutBuffer();
 
-class ZSerial
+class ZSerial : public Stream
 {
   private:
     bool petsciiMode = false;
     FlowControlType flowControlType=DEFAULT_FCT;
-    bool XON=true;
+    bool XON_STATE=true;
+    void enqueByte(uint8_t c);
   public:
     ZSerial();
     void setPetsciiMode(bool petscii);
@@ -67,8 +71,8 @@ class ZSerial
     void prints(const char *expr);
     void printc(const char c);
     void printc(uint8_t c);
+    virtual size_t write(uint8_t c);
     void printb(uint8_t c);
-    void write(uint8_t c);
     void printd(double f);
     void printi(int i);
     void printf(const char* format, ...);
@@ -76,6 +80,10 @@ class ZSerial
     void flushAlways();
     int availableForWrite();
     char drainForXonXoff();
+
+    virtual int available();
+    virtual int read();
+    virtual int peek();
 };
 
 #endif

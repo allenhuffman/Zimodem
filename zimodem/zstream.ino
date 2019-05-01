@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2017 Bo Zimmerman
+   Copyright 2016-2019 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -80,7 +80,7 @@ void ZStream::serialIncoming()
     else
     {
       if(isEcho())
-        enqueSerialOut(c);
+        serial.printb(c);
       if(isPETSCII())
         c = petToAsc(c);
       socketWrite(c);
@@ -100,12 +100,14 @@ void ZStream::switchBackToCommandMode(bool logout)
     {
       if(commandMode.numericResponses)
       {
+        preEOLN(commandMode.EOLN);
         serial.prints("3");
         serial.prints(commandMode.EOLN);
       }
       else
       if(current->isAnswered())
       {
+        preEOLN(commandMode.EOLN);
         serial.prints("NO CARRIER");
         serial.prints(commandMode.EOLN);
       }
@@ -213,7 +215,8 @@ void ZStream::loop()
   else
   if(serial.isSerialOut())
   {
-    if((current->isConnected()) && (current->available()>0))
+    if(current->available()>0)
+    //&&(current->isConnected()) // not a requirement to have available bytes to read
     {
       int bufferRemaining=serialOutBufferBytesRemaining();
       if(bufferRemaining > 0)
@@ -231,7 +234,7 @@ void ZStream::loop()
             logSocketIn(c);
             if((!isTelnet() || handleAsciiIAC((char *)&c,current))
             && (!isPETSCII() || ascToPet((char *)&c,current)))
-              enqueSerialOut(c);
+              serial.printb(c);
           }
         }
       }

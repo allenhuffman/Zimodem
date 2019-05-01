@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2017 Bo Zimmerman
+   Copyright 2016-2019 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -34,10 +34,11 @@ static void hwSerialFlush()
 static void serialOutDeque()
 {
 #ifdef ZIMODEM_ESP32
-  if(TBUFhead != TBUFtail)
+  while((TBUFhead != TBUFtail)
+  &&((SER_BUFSIZE - HWSerial.availableForWrite())<dequeSize))
 #else
   if((TBUFhead != TBUFtail)
-  &&(HWSerial.availableForWrite()>=SER_BUFSIZE))
+  &&(HWSerial.availableForWrite()>=SER_BUFSIZE)) // necessary for esp8266 flow control
 #endif
   {
     serialDirectWrite(TBUF[TBUFhead]);
@@ -111,6 +112,44 @@ bool ZSerial::isPetsciiMode()
 void ZSerial::setFlowControlType(FlowControlType type)
 {
   flowControlType = type;
+#ifdef ZIMODEM_ESP32
+  if(flowControlType == FCT_RTSCTS)
+  {
+    uart_set_hw_flow_ctrl(UART_NUM_2,UART_HW_FLOWCTRL_DISABLE,0);
+    uint32_t invertMask = 0;
+    if(pinSupport[pinCTS])
+    {
+      uart_set_pin(UART_NUM_2, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, /*cts_io_num*/pinCTS);
+      // cts is input to me, output to true RS232
+      if(ctsActive == HIGH)
+        invertMask = invertMask | UART_INVERSE_CTS;
+    }
+    if(pinSupport[pinRTS])
+    {
+      uart_set_pin(UART_NUM_2, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, /*rts_io_num*/ pinRTS, UART_PIN_NO_CHANGE);
+      s_pinWrite(pinRTS, rtsActive);
+      // rts is output to me, input to true RS232
+      if(rtsActive == HIGH)
+        invertMask = invertMask | UART_INVERSE_RTS;
+    }
+    //debugPrintf("invert = %d magic values = %d %d, RTS_HIGH=%d, RTS_LOW=%d HIGHHIGH=%d LOWLOW=%d\n",invertMask,ctsActive,rtsActive, DEFAULT_RTS_HIGH, DEFAULT_RTS_LOW, HIGH, LOW);
+    if(invertMask != 0)
+      uart_set_line_inverse(UART_NUM_2, invertMask);
+    const int CUTOFF = 5;
+    if(pinSupport[pinRTS])
+    {
+      if(pinSupport[pinCTS])
+        uart_set_hw_flow_ctrl(UART_NUM_2,UART_HW_FLOWCTRL_CTS_RTS,CUTOFF);
+      else
+        uart_set_hw_flow_ctrl(UART_NUM_2,UART_HW_FLOWCTRL_CTS_RTS,CUTOFF);
+    }
+    else
+    if(pinSupport[pinCTS])
+      uart_set_hw_flow_ctrl(UART_NUM_2,UART_HW_FLOWCTRL_CTS_RTS,CUTOFF);
+  }
+  else
+    uart_set_hw_flow_ctrl(UART_NUM_2,UART_HW_FLOWCTRL_DISABLE,0);
+#endif
 }
 
 FlowControlType ZSerial::getFlowControlType()
@@ -120,12 +159,12 @@ FlowControlType ZSerial::getFlowControlType()
 
 void ZSerial::setXON(bool isXON)
 {
-  XON = isXON;
+  XON_STATE = isXON;
 }
 
 bool ZSerial::isXON()
 {
-  return XON;
+  return XON_STATE;
 }
 
 bool ZSerial::isSerialOut()
@@ -148,7 +187,7 @@ bool ZSerial::isSerialOut()
   case FCT_INVALID:
     return true;
   }
-  return XON;
+  return XON_STATE;
 }
 
 bool ZSerial::isSerialCancelled()
@@ -156,7 +195,10 @@ bool ZSerial::isSerialCancelled()
   if(flowControlType == FCT_RTSCTS)
   {
     if(pinSupport[pinCTS])
+    {
+      //debugPrintf("CTS: pin %d (%d == %d)\n",pinCTS,digitalRead(pinCTS),ctsActive);
       return (digitalRead(pinCTS) == ctsInactive);
+    }
   }
   return false;
 }
@@ -166,6 +208,53 @@ bool ZSerial::isSerialHalted()
   return !isSerialOut();
 }
 
+void ZSerial::enqueByte(uint8_t c)
+{
+  if(TBUFtail == TBUFhead)
+  {
+    switch(flowControlType)
+    {
+    case FCT_DISABLED:
+    case FCT_INVALID:
+      serialDirectWrite(c);
+      return;
+    case FCT_RTSCTS:
+#ifdef ZIMODEM_ESP32
+      if(isSerialOut())
+#else
+      if((HWSerial.availableForWrite() >= SER_BUFSIZE) // necessary for esp8266 flow control
+      &&(isSerialOut()))
+#endif
+      {
+        serialDirectWrite(c);
+        return;
+      }
+      break;
+    case FCT_NORMAL:
+    case FCT_AUTOOFF:
+    case FCT_MANUAL:
+      if((HWSerial.availableForWrite() >= SER_BUFSIZE)
+      &&(HWSerial.available() == 0)
+      &&(XON_STATE))
+      {
+        serialDirectWrite(c);
+        return;
+      }
+      break;
+    }
+  }
+  // the car jam of blocked bytes stops HERE
+  //debugPrintf("%d\n",serialOutBufferBytesRemaining());
+  while(serialOutBufferBytesRemaining()<1)
+  {
+    if(!isSerialOut())
+      delay(1);
+    else
+      serialOutDeque();
+    yield();
+  }
+  enqueSerialOut(c);
+}
 
 void ZSerial::prints(const char *expr)
 {
@@ -173,14 +262,14 @@ void ZSerial::prints(const char *expr)
   {
     for(int i=0;expr[i]!=0;i++)
     {
-      enqueSerialOut(expr[i]);
+      enqueByte(expr[i]);
     }
   }
   else
   {
     for(int i=0;expr[i]!=0;i++)
     {
-      enqueSerialOut(ascToPetcii(expr[i]));
+      enqueByte(ascToPetcii(expr[i]));
     }
   }
 }
@@ -200,27 +289,28 @@ void ZSerial::printd(double f)
 void ZSerial::printc(const char c)
 {
   if(!petsciiMode)
-    enqueSerialOut(c);
+    enqueByte(c);
   else
-    enqueSerialOut(ascToPetcii(c));
+    enqueByte(ascToPetcii(c));
 }
 
 void ZSerial::printc(uint8_t c)
 {
   if(!petsciiMode)
-    enqueSerialOut(c);
+    enqueByte(c);
   else
-    enqueSerialOut(ascToPetcii(c));
+    enqueByte(ascToPetcii(c));
 }
 
 void ZSerial::printb(uint8_t c)
 {
-  enqueSerialOut(c);
+  enqueByte(c);
 }
 
-void ZSerial::write(uint8_t c)
+size_t ZSerial::write(uint8_t c)
 {
-  enqueSerialOut(c);
+  enqueByte(c);
+  return 1;
 }
 
 void ZSerial::prints(String str)
@@ -280,18 +370,18 @@ char ZSerial::drainForXonXoff()
     switch(flowControlType)
     {
       case FCT_NORMAL:
-        if((!XON) && (ch == 17))
-          XON=true;
+        if((!XON_STATE) && (ch == 17))
+          XON_STATE=true;
         else
-        if((XON) && (ch == 19))
-          XON=false;
+        if((XON_STATE) && (ch == 19))
+          XON_STATE=false;
         break;
       case FCT_AUTOOFF:
       case FCT_MANUAL:
-        if((!XON) && (ch == 17))
-          XON=true;
+        if((!XON_STATE) && (ch == 17))
+          XON_STATE=true;
         else
-          XON=false;
+          XON_STATE=false;
         break;
       case FCT_INVALID:
         break;
@@ -300,4 +390,33 @@ char ZSerial::drainForXonXoff()
     }
   }
   return ch;
+}
+
+int ZSerial::available() 
+{ 
+  int avail = HWSerial.available();
+  if(avail == 0)
+  {
+      if((TBUFtail != TBUFhead) && isSerialOut())
+        serialOutDeque();
+  }
+  return avail;
+}
+
+int ZSerial::read() 
+{ 
+  int c=HWSerial.read();
+  if(c == -1)
+  {
+    if((TBUFtail != TBUFhead) && isSerialOut())
+      serialOutDeque();
+  }
+  else
+    logSerialIn(c);
+  return c;
+}
+
+int ZSerial::peek() 
+{ 
+  return HWSerial.peek(); 
 }

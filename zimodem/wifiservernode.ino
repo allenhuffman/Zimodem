@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2017 Bo Zimmerman
+   Copyright 2016-2019 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -18,12 +18,14 @@ WiFiServerSpec::WiFiServerSpec()
 {
   setCharArray(&delimiters,"");
   setCharArray(&maskOuts,"");
+  setCharArray(&stateMachine,"");
 }
 
 WiFiServerSpec::~WiFiServerSpec()
 {
   freeCharArray(&delimiters);
   freeCharArray(&maskOuts);
+  freeCharArray(&stateMachine);
 }
 
 WiFiServerSpec::WiFiServerSpec(WiFiServerSpec &copy)
@@ -32,6 +34,7 @@ WiFiServerSpec::WiFiServerSpec(WiFiServerSpec &copy)
   flagsBitmap = copy.flagsBitmap;
   setCharArray(&delimiters,copy.delimiters);
   setCharArray(&maskOuts,copy.maskOuts);
+  setCharArray(&stateMachine,copy.stateMachine);
 }
 
 WiFiServerSpec& WiFiServerSpec::operator=(const WiFiServerSpec &copy)
@@ -42,6 +45,7 @@ WiFiServerSpec& WiFiServerSpec::operator=(const WiFiServerSpec &copy)
     flagsBitmap = copy.flagsBitmap;
     setCharArray(&delimiters,copy.delimiters);
     setCharArray(&maskOuts,copy.maskOuts);
+    setCharArray(&stateMachine,copy.stateMachine);
   }
   return *this;
 }
@@ -128,7 +132,10 @@ bool WiFiServerNode::ReadWiFiServer(File &f, WiFiServerSpec &node)
     int chars=atoi(str.c_str());
     str = "";
     for(int i=0;i<chars && f.available()>0;i++)
-      str += (char)f.read();
+    {
+      c=f.read();
+      str += c;
+    }
     setCharArray(&node.maskOuts,str.c_str());
     if(f.available()<=0 || f.read()!='\n')
       return false;
@@ -144,10 +151,30 @@ bool WiFiServerNode::ReadWiFiServer(File &f, WiFiServerSpec &node)
     chars=atoi(str.c_str());
     str = "";
     for(int i=0;i<chars && f.available()>0;i++)
-      str += (char)f.read();
+    {
+      c=f.read();
+      str += c;
+    }
     setCharArray(&node.delimiters,str.c_str());
     if(f.available()<=0 || f.read()!='\n')
+      return true;
+    str = "";
+    c=f.read();
+    while((c != ',') && (f.available()>0))
+    {
+      str += c;
+      c=f.read();
+    }
+    if(str.length()==0)
       return false;
+    chars=atoi(str.c_str());
+    str = "";
+    for(int i=0;i<chars && f.available()>0;i++)
+    {
+      str += c;
+      c=f.read();
+    }
+    setCharArray(&node.stateMachine,str.c_str());
   }
   return true;
 }
@@ -170,6 +197,10 @@ void WiFiServerNode::SaveWiFiServers()
       f.printf("0,\n");
     else
       f.printf("%d,%s\n",strlen(serv->delimiters),serv->delimiters);
+    if(serv->stateMachine == NULL)
+      f.printf("0,\n");
+    else
+      f.printf("%d,%s\n",strlen(serv->stateMachine),serv->stateMachine);
     ct++;
     serv=serv->next;
   }
@@ -179,7 +210,7 @@ void WiFiServerNode::SaveWiFiServers()
   {
     File f = SPIFFS.open("/zlisteners.txt", "r");
     bool fail=false;
-    while(f.available()>0)
+    while(f.available()>5)
     {
       WiFiServerSpec snode;
       if(!ReadWiFiServer(f,snode))
@@ -246,6 +277,7 @@ void WiFiServerNode::RestoreWiFiServers()
         WiFiServerNode *node = new WiFiServerNode(snode.port, snode.flagsBitmap);
         setCharArray(&node->delimiters,snode.delimiters);
         setCharArray(&node->maskOuts,snode.maskOuts);
+        setCharArray(&node->stateMachine,snode.stateMachine);
         debugPrintf("Server: %d, %d: '%s' '%s'\n",node->port,node->flagsBitmap,node->delimiters,node->maskOuts);
       }
       else

@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2017 Bo Zimmerman
+   Copyright 2016-2019 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ void ZBrowser::switchTo()
   serial.setXON(true);
   showMenu=true;
   EOLN=commandMode.EOLN;
-  EOLNC=EOLN.c_str();
+  strcpy(EOLNC,commandMode.EOLN.c_str());
   currState = ZBROW_MAIN;
   lastNumber=0;
   lastString="";
@@ -47,6 +47,8 @@ void ZBrowser::serialIncoming()
   commandMode.clearPlusProgress(); // re-check the plus-escape mode
   if(crReceived)
   {
+    if(commandMode.doEcho)
+      serial.prints(EOLN);
     doModeCommand();
   }
 }
@@ -88,8 +90,11 @@ String ZBrowser::fixPathNoSlash(String p)
           finalPath += "/";
           backStack[++backX]=finalPath.length();
         }
-        lastX=i+1;
       }
+      else
+      if((i==0) && (i<p.length()-1))
+        finalPath = "/";
+      lastX=i+1;
     }
   }
 
@@ -109,7 +114,7 @@ String ZBrowser::fixPathNoSlash(String p)
     else
     {
       finalPath += sub;
-      finalPath += "/";
+      finalPath += "/"; // why this?! -- oh, so it can be removed below?
     }
   }
   if(finalPath.length()==0)
@@ -285,130 +290,95 @@ void ZBrowser::copyFiles(String source, String mask, String target, bool recurse
 
   File root = SD.open(source);
   if(!root)
+  {
     serial.printf("Unknown path: %s%s",source.c_str(),EOLNC);
-  else
+    return;
+  }
+  
   if(root.isDirectory())
   {
+    if(!SD.exists(target)) // cp d a
+    {
+      SD.mkdir(target);
+    }
+    else
+    {
+      File DD=SD.open(target); //cp d d2, cp d f 
+      if(!DD.isDirectory())
+      {
+        serial.printf("File exists: %s%s",DD.name(),EOLNC);
+        DD.close();
+        return;
+      }
+    }
     for(File file = root.openNextFile(); file != null; file = root.openNextFile())
     {
       if(matches(file.name()+maskFilterLen, mask))
       {
+        debugPrintf("file matched:%s\n",file.name());
+        String tpath = target;
         if(file.isDirectory())
         {
-          if((mask.length()>0)&&(!recurse))
-          {
-            if(isMask(mask))
-            {
-              serial.printf("Skipping: %s%s",file.name(),EOLNC);
-              continue;
-            }
-            if(!SD.exists(target))
-              SD.mkdir(target);
-            else
-            {
-              File tstTarg = SD.open(target);
-              if(!tstTarg.isDirectory())
-              {
-                if(!overwrite)
-                {
-                  serial.printf("Skipping: %s%s",file.name(),EOLNC);
-                  continue;
-                }
-                tstTarg.close();
-                SD.remove(target);
-                SD.mkdir(target);
-              }
-              else
-                tstTarg.close();
-              if(strcmp(tstTarg.name(),file.name())==0)
-              {
-                  serial.printf("Skipping: %s%s",file.name(),EOLNC);
-                  continue;
-              }
-            }
-            copyFiles(file.name(),"*",target,false,overwrite);
-            continue;
-          }
-          String tpath=target;
-          tpath += "/";
-          tpath += stripFilename(file.name());
-          if(!SD.exists(tpath))
-          {
-            SD.mkdir(tpath);
-          }
+          if(!recurse)
+            serial.printf("Skipping: %s%s",file.name(),EOLNC);
           else
           {
-            File tdir = SD.open(tpath);
-            String tnamestr=tdir.name();
-            if(!tdir.isDirectory())
-            {
-              tdir.close();
-              if(overwrite)
-              {
-                SD.remove(tnamestr);
-                SD.mkdir(tnamestr);
-              }
-              else
-              {
-                  serial.printf("Skipping: %s%s",file.name(),EOLNC);
-                  continue;
-              }
-            }
-            else
-              tdir.close();
-            if(strcmp(tnamestr.c_str(),file.name())==0)
-            {
-              serial.printf("Skipping: %s%s",file.name(),EOLNC);
-              continue;
-            }
-          }
-          if(recurse)
-          {
-            copyFiles(file.name(),"",tpath,recurse,overwrite);
-          } 
-        }
-        else 
-        {
-          String tpath=target;
-          File tchk = SD.open(target);
-          if(tchk)
-          {
-            if(tchk.isDirectory())
-            {
+            if(!tpath.endsWith("/"))
               tpath += "/";
-              tpath += stripFilename(file.name());
-              tchk.close();
-            }
-            else
-            {
-              if(!overwrite)
-              {
-                serial.printf("File exists: %s%s",tchk.name(),EOLNC);
-                tchk.close();
-                continue;
-              }
-              else
-              {
-                SD.remove(tchk.name());
-                tchk.close();
-              }
-            }
+            tpath += stripFilename(file.name());
           }
-          String sname=file.name();
-          size_t len=file.size();
-          File tfile = SD.open(tpath,FILE_WRITE);
-          for(int i=0;i<len;i++)
-          {
-            uint8_t c=file.read();
-            tfile.write(c);
-          }
-          tfile.close();
         }
+        copyFiles(file.name(),"",tpath,false,overwrite);
       }
     }
   }
+  else
+  {
+    String tpath = target;
+    if(SD.exists(tpath))
+    {
+      File DD=SD.open(tpath);
+      if(DD.isDirectory()) // cp f d, cp f .
+      {
+        if(!tpath.endsWith("/"))
+          tpath += "/";
+        tpath += stripFilename(root.name());
+        debugPrintf("file xform to file in dir:%s\n",tpath.c_str());
+      }
+      DD.close();
+    }
+    if(SD.exists(tpath))
+    {
+      File DD=SD.open(tpath);
+      if(strcmp(DD.name(),root.name())==0)
+      {
+        serial.printf("File exists: %s%s",DD.name(),EOLNC);
+        DD.close();
+        return;
+      }
+      else
+      if(!overwrite) // cp f a, cp f e
+      {
+        serial.printf("File exists: %s%s",DD.name(),EOLNC);
+        DD.close();
+        return;
+      }
+      else
+      {
+        DD.close();
+        SD.remove(tpath);
+      }
+    }
+    size_t len=root.size();
+    File tfile = SD.open(tpath,FILE_WRITE);
+    for(int i=0;i<len;i++)
+    {
+      uint8_t c=root.read();
+      tfile.write(c);
+    }
+    tfile.close();
+  }
 }
-
 
 void ZBrowser::deleteFile(String p, String mask, bool recurse)
 {
@@ -427,20 +397,31 @@ void ZBrowser::deleteFile(String p, String mask, bool recurse)
     {
       if(matches(file.name()+maskFilterLen, mask))
       {
+        String fileName = file.name();
         if(file.isDirectory())
         {
           if(recurse)
           {
-            deleteFile(file.name(),mask,recurse);
-            if(!SD.rmdir(file.name()))
-              serial.printf("Unable to delete: %s%s",file.name()+maskFilterLen,EOLNC);
+            file = root.openNextFile();
+            deleteFile(fileName.c_str(),"*",recurse);
+            if(!SD.rmdir(fileName.c_str()))
+              serial.printf("Unable to delete: %s%s",fileName.c_str()+maskFilterLen,EOLNC);
           } 
+          else
+          {
+            serial.printf("Skipping: %s%s",file.name()+maskFilterLen,EOLNC);
+            file = root.openNextFile();
+          }
         }
-        else 
-        if(!SD.remove(file.name()))
-          serial.printf("Unable to delete: %s%s",file.name()+maskFilterLen,EOLNC);
+        else
+        {
+          file = root.openNextFile();
+          if(!SD.remove(fileName))
+            serial.printf("Unable to delete: %s%s",file.name()+maskFilterLen,EOLNC);
+        }
       }
-      file = root.openNextFile();
+      else
+        file = root.openNextFile();
     }
   }
 }
@@ -478,7 +459,7 @@ void ZBrowser::showDirectory(String p, String mask, String prefix, bool recurse)
   int maskFilterLen = p.length();
   if(!p.endsWith("/"))
     maskFilterLen++;
-    
+
   File root = SD.open(p);
   if(!root)
     serial.printf("Unknown path: %s%s",p.c_str(),EOLNC);
@@ -564,17 +545,21 @@ void ZBrowser::doModeCommand()
         }
         else
         {
-          p=stripDir(rawPath);
           mask=stripFilename(rawPath);
+          if((mask.length()>0)&&(isMask(mask)))
+            p=stripDir(rawPath);
+          else
+          {
+            mask="";
+            p=rawPath;
+          }
         }
-        
-        debugPrintf("ls:%s (%s)\n",p.c_str(),mask.c_str());
         showDirectory(p,mask,"",recurse);
       }
       else
       if(cmd.equalsIgnoreCase("md")||cmd.equalsIgnoreCase("mkdir")||cmd.equalsIgnoreCase("makedir"))
       {
-        String p = makePath(line);
+        String p = makePath(cleanOneArg(line));
         debugPrintf("md:%s\n",p.c_str());
         if((p.length() < 2) || isMask(p) || !SD.mkdir(p))
           serial.printf("Illegal path: %s%s",p.c_str(),EOLNC);
@@ -582,7 +567,7 @@ void ZBrowser::doModeCommand()
       else
       if(cmd.equalsIgnoreCase("cd"))
       {
-        String p = makePath(line);
+        String p = makePath(cleanOneArg(line));
         debugPrintf("cd:%s\n",p.c_str());
         if(p.length()==0)
           serial.printf("Current path: %s%s",p.c_str(),EOLNC);
@@ -605,7 +590,7 @@ void ZBrowser::doModeCommand()
       else
       if(cmd.equalsIgnoreCase("rd")||cmd.equalsIgnoreCase("rmdir")||cmd.equalsIgnoreCase("deletedir"))
       {
-        String p = makePath(line);
+        String p = makePath(cleanOneArg(line));
         debugPrintf("rd:%s\n",p.c_str());
         File root = SD.open(p);
         if(!root)
@@ -620,7 +605,7 @@ void ZBrowser::doModeCommand()
       else
       if(cmd.equalsIgnoreCase("cat")||cmd.equalsIgnoreCase("type"))
       {
-        String p = makePath(line);
+        String p = makePath(cleanOneArg(line));
         debugPrintf("cat:%s\n",p.c_str());
         File root = SD.open(p);
         if(!root)
@@ -640,7 +625,7 @@ void ZBrowser::doModeCommand()
       else
       if(cmd.equalsIgnoreCase("xget"))
       {
-        String p = makePath(line);
+        String p = makePath(cleanOneArg(line));
         debugPrintf("xget:%s\n",p.c_str());
         File root = SD.open(p);
         if(!root)
@@ -676,7 +661,7 @@ void ZBrowser::doModeCommand()
       else
       if(cmd.equalsIgnoreCase("xput"))
       {
-        String p = makePath(line);
+        String p = makePath(cleanOneArg(line));
         debugPrintf("xput:%s\n",p.c_str());
         File root = SD.open(p);
         if(root)
@@ -717,9 +702,9 @@ void ZBrowser::doModeCommand()
         }
       }
       else
-      if(cmd.equalsIgnoreCase("zget"))
+      if(cmd.equalsIgnoreCase("zget")||cmd.equalsIgnoreCase("rz")||cmd.equalsIgnoreCase("rz.exe"))
       {
-        String p = makePath(line);
+        String p = makePath(cleanOneArg(line));
         debugPrintf("zget:%s\n",p.c_str());
         File root = SD.open(p);
         if(!root)
@@ -733,29 +718,24 @@ void ZBrowser::doModeCommand()
         else
         {
           root.close();
-          File rfile = SD.open(p, FILE_READ);
           String errors="";
-          serial.printf("Go to ZModem download.%s",EOLNC);
-          serial.flushAlways();
           initZSerial(commandMode.getFlowControlType());
-          if(zDownload(rfile,errors))
+          if(zDownload(SD,p,errors))
           {
-            rfile.close();
             delay(1000);
             serial.printf("Download completed successfully.%s",EOLNC);
           }
           else
           {
-            rfile.close();
             delay(1000);
             serial.printf("Download failed (%s).%s",errors.c_str(),EOLNC);
           }
         }
       }
       else
-      if(cmd.equalsIgnoreCase("zput")||cmd.equalsIgnoreCase("rz"))
+      if(cmd.equalsIgnoreCase("zput")||cmd.equalsIgnoreCase("sz"))
       {
-        String p = makePath(line);
+        String p = makePath(cleanOneArg(line));
         debugPrintf("zput:%s\n",p.c_str());
         String dirNm=p;
         File rootDir=SD.open(dirNm);
@@ -767,11 +747,13 @@ void ZBrowser::doModeCommand()
         }
         else
         {
+          String rootDirNm = rootDir.name();
+          rootDir.close();
           String errors="";
           serial.printf("Go to ZModem upload.%s",EOLNC);
           serial.flushAlways();
           initZSerial(commandMode.getFlowControlType());
-          if(zUpload(SD,rootDir.name(),errors))
+          if(zUpload(SD,rootDirNm,errors))
           {
             delay(1000);
             serial.printf("Upload completed successfully.%s",EOLNC);
@@ -790,7 +772,7 @@ void ZBrowser::doModeCommand()
         line = stripArgs(line,argLetters);
         argLetters.toLowerCase();
         bool recurse=argLetters.indexOf('r')>=0;
-        String rawPath = makePath(line);
+        String rawPath = makePath(cleanOneArg(line));
         String p=stripDir(rawPath);
         String mask=stripFilename(rawPath);
         debugPrintf("rm:%s (%s)\n",p.c_str(),mask.c_str());
@@ -812,9 +794,11 @@ void ZBrowser::doModeCommand()
         else
         {
           mask=stripFilename(p1);
-          p1=stripDir(p1);
+          if(!isMask(mask))
+            mask="";
+          else
+            p1=stripDir(p1);
         }
-        
         debugPrintf("cp:%s (%s) -> %s\n",p1.c_str(),mask.c_str(), p2.c_str());
         copyFiles(p1,mask,p2,recurse,overwrite);
       }
@@ -826,6 +810,7 @@ void ZBrowser::doModeCommand()
       else
       if(cmd.equalsIgnoreCase("ren")||cmd.equalsIgnoreCase("rename"))
       {
+        
         String p1=makePath(cleanFirstArg(line));
         String p2=makePath(cleanRemainArg(line));
         debugPrintf("ren:%s -> %s\n",p1.c_str(), p2.c_str());
@@ -838,6 +823,151 @@ void ZBrowser::doModeCommand()
         {
           if(!SD.rename(p1,p2))
             serial.printf("Failed to rename: %s%s",p1.c_str(),EOLNC);
+        }
+      }
+      else
+      if(cmd.equalsIgnoreCase("wget"))
+      {
+        String p1=cleanFirstArg(line);
+        String p2=makePath(cleanRemainArg(line));
+        debugPrintf("wget:%s -> %s\n",p1.c_str(), p2.c_str());
+        if((p1.length()<8)
+        || ((strcmp(p1.substring(0,7).c_str(),"http://") != 0)
+           && (strcmp(p1.substring(0,9).c_str(),"https://") != 0)))
+          serial.printf("Not a url: %s%s",p1.c_str(),EOLNC);
+        else
+        if(SD.exists(p2))
+          serial.printf("File exists: %s%s",p2.c_str(),EOLNC);
+        else
+        {
+          char buf[p1.length()+1];
+          strcpy(buf,p1.c_str());
+          char *hostIp;
+          char *req;
+          int port;
+          bool doSSL;
+          if(!parseWebUrl((uint8_t *)buf,&hostIp,&req,&port,&doSSL))
+            serial.printf("Invalid url: %s",p1.c_str());
+          else
+          if(!doWebGet(hostIp, port, &SD, p2.c_str(), req, doSSL))
+            serial.printf("Wget failed: %s to file %s",p1.c_str(),p2.c_str());
+        }
+      }
+      else
+      if(cmd.equalsIgnoreCase("fget"))
+      {
+        String p1=cleanFirstArg(line);
+        String p2=makePath(cleanRemainArg(line));
+        debugPrintf("fget:%s -> %s\n",p1.c_str(), p2.c_str());
+        char *tmp=0;
+        if((p1.length()<11)
+        || ((strcmp(p1.substring(0,6).c_str(),"ftp://") != 0)
+           && (strcmp(p1.substring(0,7).c_str(),"ftps://") != 0)))
+          serial.printf("Not a url: %s%s",p1.c_str(),EOLNC);
+        /*
+        else
+        if(((tmp=strchr(p1.c_str(),'@'))==0)
+        ||(strchr(p1.c_str()+6,':')>tmp)
+        ||(strchr(p1.c_str()+6,':')==0))
+            serial.printf("Missing username:password@ syntax: %s%s",p1.c_str(),EOLNC);
+        */
+        else
+        if(SD.exists(p2))
+          serial.printf("File exists: %s%s",p2.c_str(),EOLNC);
+        else
+        {
+          uint8_t buf[p1.length()+1];
+          strcpy((char *)buf,p1.c_str());
+          char *hostIp;
+          char *req;
+          int port;
+          bool doSSL;
+          char *username;
+          char *password;
+          if(!parseFTPUrl(buf,&hostIp,&req,&port,&doSSL,&username,&password))
+            serial.printf("Invalid url: %s",p1.c_str());
+          else
+          if(!doFTPGet(&SD, hostIp, port, p2.c_str(), req, username, password, doSSL))
+            serial.printf("Fget failed: %s to file %s",p1.c_str(),p2.c_str());
+        }
+      }
+      else
+      if(cmd.equalsIgnoreCase("fput"))
+      {
+        String p1=makePath(cleanFirstArg(line));
+        String p2=cleanRemainArg(line);
+        debugPrintf("fput:%s -> %s\n",p1.c_str(), p2.c_str());
+        char *tmp=0;
+        if((p2.length()<11)
+        || ((strcmp(p2.substring(0,6).c_str(),"ftp://") != 0)
+           && (strcmp(p2.substring(0,7).c_str(),"ftps://") != 0)))
+          serial.printf("Not a url: %s%s",p2.c_str(),EOLNC);
+        /*
+        else
+        if(((tmp=strchr(p2.c_str(),'@'))==0)
+        ||(strchr(p2.c_str()+6,':')>tmp)
+        ||(strchr(p2.c_str()+6,':')==0))
+            serial.printf("Missing username:password@ syntax: %s%s",p2.c_str(),EOLNC);
+        */
+        else
+        if(!SD.exists(p1))
+          serial.printf("File not found: %s%s",p1.c_str(),EOLNC);
+        else
+        {
+          uint8_t buf[p2.length()+1];
+          strcpy((char *)buf,p2.c_str());
+          char *hostIp;
+          char *req;
+          int port;
+          bool doSSL;
+          char *username;
+          char *password;
+          File file = SD.open(p1);
+          if(!parseFTPUrl(buf,&hostIp,&req,&port,&doSSL,&username,&password))
+            serial.printf("Invalid url: %s",p2.c_str());
+          else
+          if(!file)
+            serial.printf("File not found: %s%s",p1.c_str(),EOLNC);
+          else
+          {
+            if(!doFTPPut(file, hostIp, port, req, username, password, doSSL))
+              serial.printf("Fput failed: %s from file %s",p2.c_str(),p1.c_str());
+            file.close();
+          }
+        }
+      }
+      else
+      if(cmd.equalsIgnoreCase("fls") || cmd.equalsIgnoreCase("fdir"))
+      {
+        String p1=cleanOneArg(line);
+        debugPrintf("fls:%s\n",p1.c_str());
+        char *tmp=0;
+        if((p1.length()<11)
+        || ((strcmp(p1.substring(0,6).c_str(),"ftp://") != 0)
+           && (strcmp(p1.substring(0,7).c_str(),"ftps://") != 0)))
+          serial.printf("Not a url: %s%s",p1.c_str(),EOLNC);
+        /*
+        else
+        if(((tmp=strchr(p1.c_str(),'@'))==0)
+        ||(strchr(p1.c_str()+6,':')>tmp)
+        ||(strchr(p1.c_str()+6,':')==0))
+            serial.printf("Missing username:password@ syntax: %s%s",p1.c_str(),EOLNC);
+        */
+        else
+        {
+          uint8_t buf[p1.length()+1];
+          strcpy((char *)buf,p1.c_str());
+          char *hostIp;
+          char *req;
+          int port;
+          bool doSSL;
+          char *username;
+          char *password;
+          if(!parseFTPUrl(buf,&hostIp,&req,&port,&doSSL,&username,&password))
+            serial.printf("Invalid url: %s",p1.c_str());
+          else
+          if(!doFTPLS(&serial, hostIp, port, req, username, password, doSSL))
+            serial.printf("Fls failed: %s",p1.c_str());
         }
       }
       else
@@ -855,11 +985,23 @@ void ZBrowser::doModeCommand()
         else
         {
           mask=stripFilename(p1);
-          p1=stripDir(p1);
+          if((mask.length()>0)&&(isMask(mask)))
+            p1=stripDir(p1);
+          else
+            mask = "";
         }
-        debugPrintf("mv:%s -> %s\n",p1.c_str(),p2.c_str());
+        debugPrintf("mv:%s(%s) -> %s\n",p1.c_str(),mask.c_str(),p2.c_str());
         if((mask.length()==0)||(!isMask(mask)))
         {
+          File root = SD.open(p2);
+          if(root && root.isDirectory())
+          {
+            if (!p2.endsWith("/"))
+              p2 += "/";
+            p2 += stripFilename(p1);
+            debugPrintf("mv:%s -> %s\n",p1.c_str(),p2.c_str());
+          }
+          root.close();
           if(p1 == p2)
             serial.printf("File exists: %s%s",p1.c_str(),EOLNC);
           else
@@ -870,7 +1012,7 @@ void ZBrowser::doModeCommand()
             if(SD.exists(p2))
               SD.remove(p2);
             if(!SD.rename(p1,p2))
-              serial.printf("Failed to rename: %s%s",p1.c_str(),EOLNC);
+              serial.printf("Failed to move: %s%s",p1.c_str(),EOLNC);
           }
         }
         else
@@ -883,19 +1025,23 @@ void ZBrowser::doModeCommand()
       if(cmd.equals("?")||cmd.equals("help"))
       {
         serial.printf("Commands:%s",EOLNC);
-        serial.printf("ls/dir/list/$ (-r) ([path])  - List files%s",EOLNC);
-        serial.printf("cd [path]  - Change to new directory%s",EOLNC);
-        serial.printf("md/mkdir/makedir [path]  - Create a new directory%s",EOLNC);
-        serial.printf("rd/rmdir/deletedir [path]  - Delete a directory%s",EOLNC);
-        serial.printf("rm/del/delete (-r) [path]  - Delete a file%s",EOLNC);
-        serial.printf("cp/copy (-r) (-f) [path] [path]  - Copy file(s)%s",EOLNC);
-        serial.printf("ren/rename [path] [path]  - Rename a file%s",EOLNC);
-        serial.printf("mv/move (-f) [path] [path]  - Move file(s)%s",EOLNC);
-        serial.printf("cat/type [path]  - View a file(s)%s",EOLNC);
-        serial.printf("df/free/info - Show space remaining%s",EOLN);
-        serial.printf("xget/zget [path]  - Download a file%s",EOLNC);
-        serial.printf("xput/zput [path]  - Upload a file%s",EOLNC);
-        serial.printf("exit/quit/x/endshell  - Quit to command mode%s",EOLNC);
+        serial.printf("ls/dir/list/$ [-r] [/][path]                   - List files%s",EOLNC);
+        serial.printf("cd [/][path][..]                               - Change to new directory%s",EOLNC);
+        serial.printf("md/mkdir/makedir [/][path]                     - Create a new directory%s",EOLNC);
+        serial.printf("rd/rmdir/deletedir [/][path]                   - Delete a directory%s",EOLNC);
+        serial.printf("rm/del/delete [-r] [/][path]filename           - Delete a file%s",EOLNC);
+        serial.printf("cp/copy [-r] [-f] [/][path]file [/][path]file  - Copy file(s)%s",EOLNC);
+        serial.printf("ren/rename [/][path]file [/][path]file         - Rename a file%s",EOLNC);
+        serial.printf("mv/move [-f] [/][path]file [/][path]file       - Move file(s)%s",EOLNC);
+        serial.printf("cat/type [/][path]filename                     - View a file(s)%s",EOLNC);
+        serial.printf("df/free/info                                   - Show space remaining%s",EOLNC);
+        serial.printf("xget/zget [/][path]filename                    - Download a file%s",EOLNC);
+        serial.printf("xput/zput [/][path]filename                    - Upload a file%s",EOLNC);
+        serial.printf("wget [http://url] [/][path]filename            - Download url to file%s",EOLNC);
+        serial.printf("fget [ftp://user:pass@url/file] [/][path]file  - FTP get file%s",EOLNC);
+        serial.printf("fput [/][path]file [ftp://user:pass@url/file]  - FTP put file%s",EOLNC);
+        serial.printf("fdir [ftp://user:pass@url/path]                - ftp url dir%s",EOLNC);
+        serial.printf("exit/quit/x/endshell                           - Quit to command mode%s",EOLNC);
         serial.printf("%s",EOLNC);
       }
       else
