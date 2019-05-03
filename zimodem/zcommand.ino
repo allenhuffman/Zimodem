@@ -1044,7 +1044,7 @@ ZResult ZCommand::doUpdateFirmware(int vval, uint8_t *vbuf, int vlen, bool isNum
   uint8_t buf[255];
   int bufSize = 254;
 #ifdef ZIMODEM_ESP32
-  if((!doWebGetBytes("www.zimmers.net", 80, "/otherprojs/guru-latest-version.txt", false, buf, &bufSize))||(bufSize<=0))
+  //if((!doWebGetBytes("www.zimmers.net", 80, "/otherprojs/guru-latest-version.txt", false, buf, &bufSize))||(bufSize<=0))
   if((!doWebGetBytes(UPDATE_URL, 80, VERSION_FILE, false, buf, &bufSize))||(bufSize<=0))
     return ZERROR;
 #else
@@ -1101,10 +1101,9 @@ ZResult ZCommand::doUpdateFirmware(int vval, uint8_t *vbuf, int vlen, bool isNum
   sprintf(firmwareName,UPDATE_FILE,buf);
 #endif
   uint32_t respLength=0;
-  WiFiClient *c = doWebGetStream("www.zimmers.net", 80, firmwareName, false, &respLength); 
+  //WiFiClient *c = doWebGetStream("www.zimmers.net", 80, firmwareName, false, &respLength); 
+  WiFiClient *c = doWebGetStream(UPDATE_URL, 80, firmwareName, false, &respLength); 
   if(c==null)
-
-  if(!doWebGetStream(UPDATE_URL, 80, firmwareName, &c, &respLength))
   {
     serial.prints(EOLN);
     return ZERROR;
@@ -2452,6 +2451,7 @@ ZResult ZCommand::doSerialCommand()
             int oldDelay = serialDelayMs;
             serialDelayMs = vval;
             uint8_t buf[100];
+            // CoCoWiFi: Leaving this alone to pull official docs from Bo's site.
             sprintf((char *)buf,"www.zimmers.net:80/otherprojs%s",filename);
             serial.prints("Control-C to Abort.");
             serial.prints(EOLN);
