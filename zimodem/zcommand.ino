@@ -6,6 +6,7 @@
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
 
+     http://www.apache.org/licenses/LICENSE-2.0
 
    Unless required by applicable law or agreed to in writing, software
    distributed under the License is distributed on an "AS IS" BASIS,
@@ -1043,16 +1044,18 @@ ZResult ZCommand::doUpdateFirmware(int vval, uint8_t *vbuf, int vlen, bool isNum
   
   uint8_t buf[255];
   int bufSize = 254;
-#ifdef ZIMODEM_ESP32
-  //if((!doWebGetBytes("www.zimmers.net", 80, "/otherprojs/guru-latest-version.txt", false, buf, &bufSize))||(bufSize<=0))
+#if defined(COCOWIFI)
   if((!doWebGetBytes(UPDATE_URL, 80, VERSION_FILE, false, buf, &bufSize))||(bufSize<=0))
+    return ZERROR;
+#else // Bo's code:
+#ifdef ZIMODEM_ESP32
+  if((!doWebGetBytes("www.zimmers.net", 80, "/otherprojs/guru-latest-version.txt", false, buf, &bufSize))||(bufSize<=0))
     return ZERROR;
 #else
-  //if((!doWebGetBytes("www.zimmers.net", 80, "/otherprojs/c64net-latest-version.txt", false, buf, &bufSize))||(bufSize<=0))
-  if((!doWebGetBytes(UPDATE_URL, 80, VERSION_FILE, false, buf, &bufSize))||(bufSize<=0))
+  if((!doWebGetBytes("www.zimmers.net", 80, "/otherprojs/c64net-latest-version.txt", false, buf, &bufSize))||(bufSize<=0))
     return ZERROR;
 #endif
-  
+#endif // COCOWIFI
   if((!isNumber)&&(vlen>2))
   {
     if(vbuf[0]=='=')
@@ -1092,17 +1095,17 @@ ZResult ZCommand::doUpdateFirmware(int vval, uint8_t *vbuf, int vlen, bool isNum
   serial.printf("Updating to %s, wait for modem restart...",buf);
   serial.flush();
   char firmwareName[100];
-
+#if defined(COCOWIFI)
+  sprintf(firmwareName,UPDATE_FILE,buf);
+#else // Bo's code:
 #ifdef ZIMODEM_ESP32
-  // sprintf(firmwareName,"/otherprojs/guru-firmware-%s.bin",buf);
-  sprintf(firmwareName,UPDATE_FILE,buf);
+  sprintf(firmwareName,"/otherprojs/guru-firmware-%s.bin",buf);
 #else
-  // sprintf(firmwareName,"/otherprojs/c64net-firmware-%s.bin",buf);
-  sprintf(firmwareName,UPDATE_FILE,buf);
+  sprintf(firmwareName,"/otherprojs/c64net-firmware-%s.bin",buf);
 #endif
+#endif // COCOWIFI
   uint32_t respLength=0;
-  //WiFiClient *c = doWebGetStream("www.zimmers.net", 80, firmwareName, false, &respLength); 
-  WiFiClient *c = doWebGetStream(UPDATE_URL, 80, firmwareName, false, &respLength); 
+  WiFiClient *c = doWebGetStream("www.zimmers.net", 80, firmwareName, false, &respLength); 
   if(c==null)
   {
     serial.prints(EOLN);
@@ -2451,7 +2454,6 @@ ZResult ZCommand::doSerialCommand()
             int oldDelay = serialDelayMs;
             serialDelayMs = vval;
             uint8_t buf[100];
-            // CoCoWiFi: Leaving this alone to pull official docs from Bo's site.
             sprintf((char *)buf,"www.zimmers.net:80/otherprojs%s",filename);
             serial.prints("Control-C to Abort.");
             serial.prints(EOLN);
@@ -2675,8 +2677,10 @@ void ZCommand::showInitMessage()
   //serial.prints(compile_date);
   //serial.prints(")");
   serial.prints(commandMode.EOLN);
+#if defined(COCOWIFI)
   serial.prints("CoCoWiFi Version.");
   serial.prints(commandMode.EOLN);
+#endif // COCOWIFI
   char s[100];
 #ifdef ZIMODEM_ESP32
   sprintf(s,"sdk=%s chipid=%d cpu@%d",ESP.getSdkVersion(),ESP.getChipRevision(),ESP.getCpuFreqMHz());
